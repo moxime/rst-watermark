@@ -247,3 +247,5 @@ if __name__ == '__main__':
     plt.figure()
     plt.plot(s.cpu().T)
     plt.show(block=False)
+
+    input()
