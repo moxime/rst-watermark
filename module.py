@@ -35,7 +35,7 @@ class Mask(nn.Module):
 
         self.store_tensors = store_tensors
 
-        self.thetas = nn.Parameter(torch.linspace(0, torch.pi * (1 - 1 / self.T), self.T), requires_grad=False)
+        self.thetas = nn.Parameter(torch.linspace(0, np.pi * (1 - 1 / self.T), self.T), requires_grad=False)
 
         self.lp = nn.Parameter(torch.randn(weighing_harmonics + 1))
 
