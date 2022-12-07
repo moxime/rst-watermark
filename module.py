@@ -1,15 +1,17 @@
 import sys
 import logging
+import warnings
 import argparse
-import numpy as np
 import torch
 from torch import nn
+import torchvision
 import PIL
 import time
 import matplotlib.pyplot as plt
 
 HALF_PLANE = True
 HALF_PLANE = False
+
 
 def print_time(t):
     if t < 1e-6:
@@ -35,7 +37,7 @@ class Mask(nn.Module):
 
         self.store_tensors = store_tensors
 
-        self.thetas = nn.Parameter(torch.linspace(0, np.pi * (1 - 1 / self.T), self.T), requires_grad=False)
+        self.thetas = nn.Parameter(torch.linspace(0, torch.pi * (1 - 1 / self.T), self.T), requires_grad=False)
 
         self.lp = nn.Parameter(torch.randn(weighing_harmonics + 1))
 
@@ -71,7 +73,8 @@ class Mask(nn.Module):
 
     def _compute_masks(self, *i):
         i = list(i)
-        logging.debug('Computing masks for {}'.format(', '.join(str(_) for _ in i)))
+        if 0 in i:
+            logging.debug('Computing masks for {}'.format(', '.join(str(_) for _ in i)))
         H, W = self.shape
 
         assert not H % 2 and not W % 2
@@ -85,10 +88,10 @@ class Mask(nn.Module):
 
         Wmin = - W // 2
         nW = W
-            
+
         Hmax = H // 2 - 1
         Wmax = W // 2 - 1
-        
+
         dim_names = ('P', 'theta', 'm', 'n')
         device = self.device
         m_ = torch.linspace(Hmin, Hmax, nH, device=device)[None, None, :, None].rename(*dim_names)
@@ -149,6 +152,8 @@ class ExtractModule(nn.Module):
         self.T = T
         self.P = len(self.masks.lp)
 
+        self.norm = norm
+
         self._shape = shape
 
     def train(self, v=True):
@@ -179,21 +184,23 @@ class ExtractModule(nn.Module):
             H_, W_ = H // 2, W
         else:
             H_, W_ = H, W
-            
+
         image_fft = torch.fft.fft2(batch.rename(None), s=self.masks.shape, norm='ortho')
-        pseudo_image = torch.fft.ifft2(image_fft.pow(2), norm='ortho').real[:, -H_:, -W_:]
+        pseudo_image = torch.fft.ifft2(image_fft.abs().pow(self.norm), norm='ortho').real[:, -H_:, -W_:]
 
         return torch.stack([(self.masks[_].rename(None) * pseudo_image).sum((-2, -1))
-                                    for _ in range(self.T)], dim=1)
+                            for _ in range(self.T)], dim=1)
 
 
 if __name__ == '__main__':
 
+    logging.getLogger().setLevel(logging.ERROR)
     logging.getLogger().setLevel(logging.DEBUG)
+    warnings.filterwarnings('ignore', category=UserWarning)
 
-    K, L = 512, 256
+    K, L = 512, 512
     default_shape = [K, L]
-    default_batch_size = 2
+    default_batch_size = 1
     default_T = 180
 
     parser = argparse.ArgumentParser()
@@ -203,7 +210,9 @@ if __name__ == '__main__':
     parser.add_argument('-T', default=default_T, type=int)
     parser.add_argument('--no-pow', action='store_false', dest='pow_of_two')
     parser.add_argument('--store_masks', action='store_true')
-    
+    parser.add_argument('-p', action='count', default=0)
+    parser.add_argument('-I', nargs='+')
+
     args_from_py = '--cpu'.split()
     args_from_py = ''.split()
 
@@ -212,40 +221,76 @@ if __name__ == '__main__':
     K, L = args.shape
     batch_size = args.batch_size
 
-    batch = torch.rand(batch_size, K, L, device=args.device)
-    # t0 = time.time()
+    if args.I:
+        to_tensor = torchvision.transforms.ToTensor()
+        image_list = []
+        for image_path in args.I:
+            image = PIL.Image.open(image_path)
+            image_tensor = to_tensor(image).mean(0).to(args.device)
+            print('Image {} shape:'.format(image_path), *image_tensor.shape)
+            image_list.append(image_tensor)
 
-    # pseudo_image = extract(image, pow_of_two=args.pow_of_two)
+        K = min([_.shape[0] for _ in image_list])
+        L = min([_.shape[1] for _ in image_list])
 
-    # print(*pseudo_image.shape)
+        image_cropper = torchvision.transforms.CenterCrop((K, L))
+        batch = torch.stack([image_cropper(_) for _ in image_list])
+        print('*** {} images of shape {}x{}'.format(*batch.shape))
 
-    # t = time.time() - t0
+    else:
+        batch = torch.rand(batch_size, K, L, device=args.device)
 
-    # print('{}/image'.format(print_time(t / batch_size)))
-
-    e = ExtractModule(2, norm=2, T=args.T, init_lp=0, store_masks_tensors=args.store_masks)
-    e.to(args.device)
-
-    #    with torch.no_grad():
-    s = e(batch)
-
-    image_fft = torch.fft.fft2(batch[0].rename(None), s=[2 * K, 2 * L], norm='ortho')
-    pseudo_image = torch.fft.ifft2(image_fft.pow(2), norm='ortho').real
-
-
-    logging.getLogger().setLevel(logging.ERROR)
     plt.close('all')
-    for t in [0, 45, 90, 120]:
-        plt.figure()
-        mask = e.masks[t]
-        m, M = mask.min().item(), mask.max().item()
-        mask = (mask - m) / (M - m)
-        plt.imshow(mask.cpu())
-        plt.title(t)
-        plt.show(block=False)
-        
-    plt.figure()
-    plt.plot(s.cpu().T)
-    plt.show(block=False)
 
-    input()
+    plot = ['']
+    plot_thetas = []
+
+    if args.p:
+        plot.append('signature')
+    if args.p > 1:
+        plot_thetas = [0, 45, 90, 120]
+    if args.p > 2:
+        plot.append('pseudo_image')
+
+    norm_ = [2, 2, 2]
+    padding_ = [2, 4, 8]
+    norm_ = [2]
+    padding_ = [2]
+
+    for norm, padding in zip(norm_, padding_):
+        print('extraction with norm {} and padding {}'.format(norm, padding))
+
+        e = ExtractModule(padding, norm=norm, T=args.T, init_lp=0, store_masks_tensors=args.store_masks)
+        e.to(args.device)
+
+        #    with torch.no_grad():
+        s = e(batch)
+
+        if 'pseudo_image' in plot:
+
+            image_fft = torch.fft.fft2(batch[0].rename(None), s=[padding * K, padding * L], norm='ortho')
+            pseudo_image = torch.fft.ifft2(image_fft.abs().pow(norm), norm='ortho').real
+            plt.imshow(pseudo_image.cpu())
+            plt.title('Pseudo Image')
+            plt.show(block=False)
+
+        logging.getLogger().setLevel(logging.ERROR)
+
+        for t in plot_thetas:
+            plt.figure()
+            mask = e.masks[t]
+            m, M = mask.min().item(), mask.max().item()
+            mask = (mask - m) / (M - m)
+            plt.imshow(mask.cpu())
+            plt.title(t)
+            plt.show(block=False)
+
+        if 'signature' in plot:
+            plt.figure()
+            s_ = s[:, 1:] - s[:, :-1]
+            plt.plot(s_.T.cpu())
+            plt.title('s with norm {} and padding {}'.format(norm, padding))
+            plt.show(block=False)
+
+    if len(sys.argv) > 1 and args.p:
+        input()
