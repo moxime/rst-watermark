@@ -174,7 +174,11 @@ class ExtractModule(nn.Module):
 
     def forward(self, batch):
 
-        assert batch.ndim in [2, 3]
+        if batch.ndim > 3:
+            assert batch.shape[1] == 1
+            return self.forward(batch.squeeze(1))
+
+        assert batch.ndim in [2, 3], print('*** batch shape:', *batch.shape)
         is_batch = batch.ndim == 3
 
         self.shape = batch.shape[-2:]
