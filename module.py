@@ -74,7 +74,7 @@ class Mask(nn.Module):
     def _compute_masks(self, *i):
         i = list(i)
         if 0 in i:
-            logging.debug('Computing masks for {}'.format(', '.join(str(_) for _ in i)))
+            logging.debug('*** Computing masks for {}'.format(', '.join(str(_) for _ in i)))
         H, W = self.shape
 
         assert not H % 2 and not W % 2
@@ -154,7 +154,7 @@ class ExtractModule(nn.Module):
 
         self.norm = norm
 
-        self._shape = shape
+        self.shape = shape
 
     def train(self, v=True):
         super().train(v)
