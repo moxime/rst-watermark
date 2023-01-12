@@ -94,8 +94,11 @@ class Mask(nn.Module):
 
         dim_names = ('P', 'theta', 'm', 'n')
         device = self.device
-        m_ = torch.linspace(Hmin, Hmax, nH, device=device)[None, None, :, None].rename(*dim_names)
-        n_ = torch.linspace(Wmin, Wmax, nW, device=device)[None, None, None, :].rename(*dim_names)
+        m_ = ((torch.linspace(0, nH - 1, nH, device=device)[None, None, :, None] - Hmin) % nH) + Hmin
+        m_.rename_(*dim_names) 
+
+        n_ = ((torch.linspace(0, nW - 1, nW, device=device)[None, None, None, :] - Wmin) % nW) + Wmin
+        n_.rename_(*dim_names) 
 
         theta = self.thetas[i]
         cost = torch.cos(theta)[None, :, None, None].rename(*dim_names)
@@ -140,8 +143,11 @@ class Mask(nn.Module):
 class ExtractModule(nn.Module):
 
     def __init__(self, padding, shape=[1024, 1024], T=180, norm=1,
-                 weighing_harmonics=2, init_lp='rand', store_masks_tensors=False,
+                 weighing_harmonics=2, init_lp='rand', estimate_mean=False,
+                 store_masks_tensors=False,
                  **kw):
+
+        assert norm == 2 and padding == 2 or not estimate_mean, 'Estimate mean only for norm 2 ({})'.format(norm)
 
         super().__init__(**kw)
         self.padding = padding
@@ -155,6 +161,8 @@ class ExtractModule(nn.Module):
         self.norm = norm
 
         self.shape = shape
+
+        self.estimate_mean = estimate_mean
 
     def train(self, v=True):
         super().train(v)
@@ -172,14 +180,16 @@ class ExtractModule(nn.Module):
         self.masks.shape = (int(self.padding * v[0]), int(self.padding * v[1]))
         self._shape = v
 
-    def forward(self, batch):
+    def forward(self, batch, squeeze=False):
 
         if batch.ndim > 3:
             assert batch.shape[1] == 1
             return self.forward(batch.squeeze(1))
 
-        assert batch.ndim in [2, 3], print('*** batch shape:', *batch.shape)
-        is_batch = batch.ndim == 3
+        if batch.ndim == 2:
+            return self.forward(batch.unsqueeze(0), squeeze=True)
+
+        assert batch.ndim == 3, 'batch shape: {}'.format(batch.shape)
 
         self.shape = batch.shape[-2:]
         H, W = self.masks.shape
@@ -189,8 +199,27 @@ class ExtractModule(nn.Module):
         else:
             H_, W_ = H, W
 
-        image_fft = torch.fft.fft2(batch.rename(None), s=self.masks.shape, norm='ortho')
-        pseudo_image = torch.fft.ifft2(image_fft.abs().pow(self.norm), norm='ortho').real[:, -H_:, -W_:]
+        image_fft = torch.fft.fft2(batch.rename(None), s=self.masks.shape)
+        pseudo_image = torch.fft.ifft2(image_fft.abs().pow(self.norm)).real[:, -H_:, -W_:]
+
+        if self.estimate_mean:
+            K, L = H_ // 2, W // 2
+            g0 = pseudo_image[:, 0, 0][:, None, None]
+            alpha_l = (pseudo_image[:, 0, 1] * L / (L - 1))[:, None, None] / g0
+            alpha_k = (pseudo_image[:, 1, 0] * K / (K - 1))[:, None, None] / g0
+
+            k_ = ((torch.linspace(0, 2 * K - 1, 2 * K)[None, :, None] + K) % (2 * K) - K)
+            l_ = ((torch.linspace(0, 2 * L - 1, 2 * L)[None, None, :] + L) % (2 * L) - L)
+            am = (L - abs(l_)) * (K - abs(k_)) / K / L
+
+            # print('im', *pseudo_image.shape)
+            # print('g0', *g0.shape)
+            # print('alpha', *alpha_k.shape)
+            # print('k_', *k_.shape)
+            # print('l_', *l_.shape)
+            # print('am', *am.shape)
+
+            pseudo_image -= g0 * alpha_k ** (k_.abs()) * alpha_l ** (l_.abs()) * am
 
         return torch.stack([(self.masks[_].rename(None) * pseudo_image).sum((-2, -1))
                             for _ in range(self.T)], dim=1)
