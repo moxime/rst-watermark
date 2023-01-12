@@ -48,6 +48,12 @@ class Mask(nn.Module):
 
         self._reset_masks()
 
+    def __repr__(self):
+        return 'Mask()'
+
+    def __str__(self):
+        return 'Mask()'
+
     @property
     def device(self):
         return self.lp.device
@@ -164,6 +170,14 @@ class ExtractModule(nn.Module):
 
         self.estimate_mean = estimate_mean
 
+    def __str__(self):
+
+        s = 'ExtractModule(padding={pad}, T={T}, estimate_mean={mean}\n(masks): {mask})'
+        return s.format(pad=self.padding, T=self.T, mean=self.estimate_mean, mask=self.masks)
+
+    def __repr__(self):
+        return self.__str__()
+        
     def train(self, v=True):
         super().train(v)
 
@@ -208,8 +222,8 @@ class ExtractModule(nn.Module):
             alpha_l = (pseudo_image[:, 0, 1] * L / (L - 1))[:, None, None] / g0
             alpha_k = (pseudo_image[:, 1, 0] * K / (K - 1))[:, None, None] / g0
 
-            k_ = ((torch.linspace(0, 2 * K - 1, 2 * K)[None, :, None] + K) % (2 * K) - K)
-            l_ = ((torch.linspace(0, 2 * L - 1, 2 * L)[None, None, :] + L) % (2 * L) - L)
+            k_ = ((torch.linspace(0, 2 * K - 1, 2 * K)[None, :, None] + K) % (2 * K) - K).to(batch.device)
+            l_ = ((torch.linspace(0, 2 * L - 1, 2 * L)[None, None, :] + L) % (2 * L) - L).to(batch.device)
             am = (L - abs(l_)) * (K - abs(k_)) / K / L
 
             # print('im', *pseudo_image.shape)
