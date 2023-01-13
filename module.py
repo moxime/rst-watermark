@@ -126,7 +126,7 @@ class Mask(nn.Module):
 
         p_ = p[:, None, None, None].rename(*dim_names).to(device)
 
-        sinc = torch.sinc((mt - p_ / 2).rename(None)) + torch.sinc((mt + p_ / 2).rename(None))
+        sinc = torch.sinc(mt - p).rename(None) + torch.sinc(mt + p).rename(None)
 
         lp_ = lp[:, None, None, None].rename(*dim_names)
 
@@ -152,7 +152,6 @@ class ExtractModule(nn.Module):
                  weighing_harmonics=2, init_lp='rand', estimate_mean=False,
                  store_masks_tensors=False,
                  **kw):
-
         assert norm == 2 and padding == 2 or not estimate_mean, 'Estimate mean only for norm 2 ({})'.format(norm)
 
         super().__init__(**kw)
@@ -236,7 +235,7 @@ class ExtractModule(nn.Module):
             pseudo_image -= g0 * alpha_k ** (k_.abs()) * alpha_l ** (l_.abs()) * am
 
         return torch.stack([(self.masks[_].rename(None) * pseudo_image).sum((-2, -1))
-                            for _ in range(self.T)], dim=1)
+                            for _ in range(self.T)], dim=1) / K / L
 
 
 if __name__ == '__main__':
