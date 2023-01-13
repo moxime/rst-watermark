@@ -126,7 +126,7 @@ class Mask(nn.Module):
 
         p_ = p[:, None, None, None].rename(*dim_names).to(device)
 
-        sinc = torch.sinc((mt - p).rename(None)) + torch.sinc((mt + p).rename(None))
+        sinc = torch.sinc((mt - p_).rename(None)) + torch.sinc((mt + p_).rename(None))
 
         lp_ = lp[:, None, None, None].rename(*dim_names)
 
